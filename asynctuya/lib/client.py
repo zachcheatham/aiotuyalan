@@ -139,7 +139,10 @@ class TuyaClient:
         self._cipher = TuyaCipher(key, device_info['version'])
 
 
-    async def send(self, command, dps) -> None:
+    async def send(self, command, dps, encrypted=False) -> None:
+        if not self._connected:
+            raise Exception("Not connected to device.")
+
         payload = {
             "gwId": self._device_info["gw_id"],
             "devId": self._device_info["id"],
@@ -148,7 +151,7 @@ class TuyaClient:
             "uid": self._device_info["id"]
         }
 
-        msg = await self._encode(payload, command)
+        msg = await self._encode(payload, command, encrypted=encrypted)
 
         await self._write(msg)
 
@@ -199,8 +202,9 @@ class TuyaClient:
         try:
             while self._connected:
                 await asyncio.sleep(PING_TIME)
-                msg = await self._encode(None, COMMAND_HEART_BEAT)
-                await self._write(msg)
+                if self._connected:
+                    msg = await self._encode(None, COMMAND_HEART_BEAT)
+                    await self._write(msg)
         except Exception as err:
             log.error("Unable to send ping to %s: %s", self._device_info['address'], err)
             traceback.print_exc()
@@ -257,7 +261,7 @@ class TuyaClient:
                     log.debug("Received pong from %s", self._device_info['address'])
                 else:
                     await self._on_payload(command, payload)
-            except Exception as error:
+            except Exception as err:
                 log.error("An error occured while handling a payload: %s", err)
                 traceback.print_exc()
 
@@ -363,7 +367,7 @@ class TuyaClient:
             json_payload = await self._cipher.encrypt(json_payload, b64=False)
 
             if typeByte != COMMAND_DP_QUERY:
-                json_payload = "3.3".encode('utf-8') + b"\0\0\0\0\0\0" + json_payload
+                json_payload = "3.3".encode('utf-8') + b"\0\0\0\0\0\0\0\0\0\0\0\0" + json_payload
                 #log.debug("Adding 3.3 non query header: %s", json_payload)
 
             #log.debug("V3.3 Encrypted payload: %s", json_payload.hex())
