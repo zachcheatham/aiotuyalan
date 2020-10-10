@@ -1,84 +1,8 @@
-import logging
-import asyncio
 import colorsys
 import bitstring
 
-from .lib.client import TuyaClient, COMMAND_DP_QUERY, COMMAND_STATUS, COMMAND_CONTROL
-
-logging.basicConfig(level=logging.DEBUG)
-log = logging.getLogger("TuyaDevice")
-
-class TuyaDevice:
-
-    DPS_INDEX_ON = '1'
-
-    def __init__(self, event_loop, address, id, local_key, port=6668, version='3.1', timeout=30, gw_id=None):
-        self._event_loop = event_loop
-        self._connection = None
-        self._connect_timeout = timeout
-        self._device_info = {
-            "address": address,
-            "port": port,
-            "id": id,
-            "gw_id": gw_id,
-            "version": version
-        }
-        self._local_key = local_key
-        self._dps: None
-
-        if self._device_info["gw_id"] is None:
-            self._device_info["gw_id"] = id
-        if len(local_key) != 16:
-            raise ValueError('Local key length should be 16 characters!')
-
-
-    async def connect(self, on_stop=None):
-        if self._connection is not None:
-            raise Exception("Attempt to connect while already connected!")
-
-        connected = False
-        stopped = False
-
-        async def _on_stop():
-            nonlocal stopped
-            if stopped:
-                return
-            stopped = True
-            self._connection = None
-
-            if connected and on_stop is not None:
-                await on_stop()
-
-        async def __on_payload(command, payload):
-            await self._on_payload(command, payload)
-
-        self._connection = TuyaClient(self._device_info, self._local_key, self._event_loop, _on_stop, __on_payload)
-
-        try:
-            await self._connection.connect()
-        except Exception as e:
-            await _on_stop()
-            raise
-
-        connected = True
-
-        await self.update()
-
-    async def update(self):
-        await self._connection.send(COMMAND_DP_QUERY, {})
-
-    async def set_enabled(self, enabled) -> None:
-        if self._dps is None:
-            raise Exception("Unable to set properties until first update is made to device.")
-        self._dps[TuyaDevice.DPS_INDEX_ON] = enabled
-        await self._connection.send(COMMAND_CONTROL, {TuyaDevice.DPS_INDEX_ON: enabled})
-
-    async def _on_payload(self, command, payload) -> None:
-        if command == COMMAND_DP_QUERY:
-            # Reset entire dps to replacement
-            self._dps = payload['dps']
-        elif command == COMMAND_STATUS:
-            self._dps = {**self._dps, **payload['dps']}
+from .device import TuyaDevice
+from .lib.client import COMMAND_CONTROL, COMMAND_DP_QUERY, COMMAND_STATUS
 
 class TuyaLight(TuyaDevice):
 

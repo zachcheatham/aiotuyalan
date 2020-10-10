@@ -131,7 +131,6 @@ class TuyaClient:
         self._socket_writer = None
         self._write_lock = asyncio.Lock()
         self._seq_lock = asyncio.Lock()
-        self._connected = False
         self._authenticated = False
         self._socket_connected = False
         self._sequenceN = 0
@@ -140,7 +139,7 @@ class TuyaClient:
 
 
     async def send(self, command, dps, encrypted=False) -> None:
-        if not self._connected:
+        if not self._socket_connected:
             raise Exception("Not connected to device.")
 
         payload = {
@@ -159,7 +158,7 @@ class TuyaClient:
     async def connect(self) -> None:
         if self._stopped:
             raise Exception("Connection is closed.")
-        if self._connected:
+        if self._socket_connected:
             raise Exception("Already connected.")
 
         try:
@@ -193,16 +192,15 @@ class TuyaClient:
 
         self._socket_reader, self._socket_writer = await asyncio.open_connection(sock=self._socket)
         self._socket_connected = True
-        self._connected = True
         self._event_loop.create_task(self._run_loop())
         self._event_loop.create_task(self._ping_loop())
 
 
     async def _ping_loop(self) -> None:
         try:
-            while self._connected:
+            while self._socket_connected:
                 await asyncio.sleep(PING_TIME)
-                if self._connected:
+                if self._socket_connected:
                     msg = await self._encode(None, COMMAND_HEART_BEAT)
                     await self._write(msg)
         except Exception as err:
@@ -227,7 +225,7 @@ class TuyaClient:
 
             await self._parse_messages(raw_messages_cpy)
 
-        while self._connected:
+        while self._socket_connected:
             try:
                 message = await self._recv()
                 async with msg_lock:
@@ -307,11 +305,6 @@ class TuyaClient:
     async def stop(self) -> None:
         if self._stopped:
             return
-        if self._connected:
-            try:
-                await self._disconnect()
-            except Exception:
-                pass
 
         self._stopped = True
 
@@ -321,7 +314,6 @@ class TuyaClient:
 
     async def _on_error(self) -> None:
         await self.stop()
-
 
     async def _close_socket(self) -> None:
         if not self._socket_connected:
