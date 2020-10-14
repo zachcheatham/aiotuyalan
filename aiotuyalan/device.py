@@ -3,8 +3,7 @@ import asyncio
 
 from .lib.client import TuyaClient, COMMAND_DP_QUERY, COMMAND_STATUS, COMMAND_CONTROL
 
-logging.basicConfig(level=logging.DEBUG)
-log = logging.getLogger("TuyaDevice")
+_LOGGER = logging.getLogger(__name__)
 
 class TuyaDevice:
 
@@ -24,15 +23,19 @@ class TuyaDevice:
             "version": version
         }
         self._local_key = local_key
-        self._dps: None
+        self._dps = None
 
-        if self._device_info["gw_id"] is None:
+        if not self._device_info["gw_id"]:
             self._device_info["gw_id"] = id
         if len(local_key) != 16:
             raise ValueError('Local key length should be 16 characters!')
 
 
-    async def connect(self):
+    def get_device_info(self):
+        return self._device_info
+
+
+    async def connect(self) -> None:
         if self._connection is not None:
             raise Exception("Attempt to connect while already connected!")
 
@@ -41,13 +44,19 @@ class TuyaDevice:
 
         async def _on_stop():
             nonlocal stopped
+            nonlocal connected
+
             if stopped:
                 return
             stopped = True
             self._connection = None
+            self._dps = None
 
             if connected and self._on_stop_callback is not None:
                 await self._on_stop_callback()
+
+            connected = False
+
 
         async def __on_payload(command, payload):
             await self._on_payload(command, payload)
@@ -70,14 +79,20 @@ class TuyaDevice:
 
         await self._connection.stop()
 
-    async def set_on_stop(self, on_stop):
+    def set_on_stop(self, on_stop):
         self._on_stop_callback = on_stop
 
-    async def set_on_update(self, on_update):
+    def set_on_update(self, on_update):
         self._on_update_callback = on_update
 
     async def update(self):
         await self._connection.send(COMMAND_DP_QUERY, {})
+
+    def get_enabled(self) -> None:
+        if self._dps is None:
+            return None
+        else:
+            return self._dps[TuyaDevice.DPS_INDEX_ON]
 
     async def set_enabled(self, enabled) -> None:
         if self._dps is None:
@@ -91,7 +106,14 @@ class TuyaDevice:
         elif command == COMMAND_STATUS:
             self._dps = {**self._dps, **payload['dps']}
 
-        print("hi")
 
         if self._on_update_callback:
             await self._on_update_callback()
+
+    @staticmethod
+    def scale_value(value, mn, mx, new_mn, new_mx):
+        return ((value - mn) / (mx - mn) * (new_mx - new_mn)) + new_mn
+
+    @staticmethod
+    def invert_value(value, mn, mx):
+        return mx - (value - mn)

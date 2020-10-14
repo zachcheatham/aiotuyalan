@@ -12,7 +12,7 @@ import pyaes
 from typing import Optional, Tuple, List, Any
 from hashlib import md5
 
-log = logging.getLogger("TuyaClient")
+_LOGGER = logging.getLogger(__name__)
 
 PING_TIME = 10
 
@@ -92,7 +92,7 @@ class TuyaCipher:
 
         if b64:
             data = base64.b64decode(data)
-            log.debug("DECRYPT B64: %s", data.hex())
+            _LOGGER.debug("DECRYPT B64: %s", data.hex())
 
         cipher = pyaes.blockfeeder.Decrypter(pyaes.AESModeOfOperationECB(self._key))
         raw = cipher.feed(data)
@@ -162,7 +162,7 @@ class TuyaClient:
             raise Exception("Already connected.")
 
         try:
-            log.debug("Resolving ip address...")
+            _LOGGER.debug("Resolving ip address...")
             coro = self.resolve_ip_address()
             sockaddr = await asyncio.wait_for(coro, 30.0)
         except asyncio.TimeoutError as err:
@@ -176,7 +176,7 @@ class TuyaClient:
         self._socket.setblocking(False)
         self._socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-        log.info("Connecting to Tuya device: %r", sockaddr)
+        _LOGGER.info("Connecting to Tuya device: %r", sockaddr)
 
         try:
             coro = self._event_loop.sock_connect(self._socket, sockaddr)
@@ -188,7 +188,7 @@ class TuyaClient:
             await self._on_error()
             raise Exception("Timeout while connecting to {}".format(sockaddr))
 
-        log.debug("Socket opened for {}".format(sockaddr))
+        _LOGGER.debug("Socket opened for {}".format(sockaddr))
 
         self._socket_reader, self._socket_writer = await asyncio.open_connection(sock=self._socket)
         self._socket_connected = True
@@ -204,7 +204,7 @@ class TuyaClient:
                     msg = await self._encode(None, COMMAND_HEART_BEAT)
                     await self._write(msg)
         except Exception as err:
-            log.error("Unable to send ping to %s: %s", self._device_info['address'], err)
+            _LOGGER.error("Unable to send ping to %s: %s", self._device_info['address'], err)
             traceback.print_exc()
 
 
@@ -234,33 +234,33 @@ class TuyaClient:
 
                     raw_messages.append(message)
                     next_msg_timeout = Timer(0.1, _on_nxt_msg_timeout)
-                    #log.debug("Received raw message: %s", message.hex())
+                    #_LOGGER.debug("Received raw message: %s", message.hex())
 
             except Exception as err:
-                log.info("Error while reading incoming message from %s: %s", self._device_info["address"], err)
+                _LOGGER.info("Error while reading incoming message from %s: %s", self._device_info["address"], err)
                 await self._on_error()
                 break
 
 
     async def _parse_messages(self, messages) -> None:
-        log.debug("Processing %d message(s) from device.", len(messages))
+        _LOGGER.debug("Processing %d message(s) from device.", len(messages))
         parsed_messages = []
         for raw_message in messages:
             try:
                 command, payload = await self._decode(raw_message)
                 parsed_messages.append((command, payload))
             except Exception as err:
-                log.error("An error occured while parsing a message: %s", err)
+                _LOGGER.error("An error occured while parsing a message: %s", err)
                 traceback.print_exc()
 
         for command, payload in parsed_messages:
             try:
                 if command == COMMAND_HEART_BEAT:
-                    log.debug("Received pong from %s", self._device_info['address'])
+                    _LOGGER.debug("Received pong from %s", self._device_info['address'])
                 else:
                     await self._on_payload(command, payload)
             except Exception as err:
-                log.error("An error occured while handling a payload: %s", err)
+                _LOGGER.error("An error occured while handling a payload: %s", err)
                 traceback.print_exc()
 
 
@@ -269,7 +269,7 @@ class TuyaClient:
             while True: # Find packet prefix to start packet, if not, we're throwing out bytes until we find it...
                 ret = await self._socket_reader.read(4)
                 if ret != PACKET_PREFIX:
-                    log.warning("Expected packet prefix (%s) received: %s", PACKET_PREFIX.hex(), ret.hex())
+                    _LOGGER.warning("Expected packet prefix (%s) received: %s", PACKET_PREFIX.hex(), ret.hex())
                 else:
                     message = ret
                     break
@@ -291,7 +291,7 @@ class TuyaClient:
         if not self._socket_connected:
             raise Exception("Socket is not connected.")
 
-        #log.debug("Wrote: %s", data.hex())
+        #_LOGGER.debug("Wrote: %s", data.hex())
 
         try:
             async with self._write_lock:
@@ -326,7 +326,7 @@ class TuyaClient:
             self._socket.close()
         self._socket_connected = False
         self._connected = False
-        log.info("Closed socket to TuyaDeivce at %s:%d", self._device_info["address"], self._device_info["port"])
+        _LOGGER.info("Closed socket to TuyaDeivce at %s:%d", self._device_info["address"], self._device_info["port"])
 
 
     async def resolve_ip_address(self) -> Tuple[Any, ...]:
@@ -345,11 +345,11 @@ class TuyaClient:
 
     async def _encode(self, payload, typeByte, encrypted=False) -> bytes:
 
-        log.debug("Sending Command: %d. Payload %r", typeByte, payload)
+        _LOGGER.debug("Sending Command: %d. Payload %r", typeByte, payload)
 
         json_payload = None
         if payload is not None:
-            log.debug(payload)
+            _LOGGER.debug(payload)
             json_payload = json.dumps(payload, separators=(',', ':'))
             json_payload = json_payload.encode('utf-8')
         else:
@@ -360,24 +360,24 @@ class TuyaClient:
 
             if typeByte != COMMAND_DP_QUERY:
                 json_payload = "3.3".encode('utf-8') + b"\0\0\0\0\0\0\0\0\0\0\0\0" + json_payload
-                #log.debug("Adding 3.3 non query header: %s", json_payload)
+                #_LOGGER.debug("Adding 3.3 non query header: %s", json_payload)
 
-            #log.debug("V3.3 Encrypted payload: %s", json_payload.hex())
+            #_LOGGER.debug("V3.3 Encrypted payload: %s", json_payload.hex())
         elif encrypted:
             json_payload = await self._cipher.encrypt(json_payload, b64=True)
 
-            #log.debug("V3.1 Encrypted payload: %s", json_payload.hex())
+            #_LOGGER.debug("V3.1 Encrypted payload: %s", json_payload.hex())
 
             md5_signature = b'data=' + json_payload + b'||lpv=' + self._device_info['version'].encode('ascii', errors='strict') + b'||' + self._key.encode('latin1', errors='strict')
 
             m = md5()
             m.update(md5_signature)
             md5_signature = m.digest()
-            #log.debug("Hex Signature: " + md5_signature.hex())
+            #_LOGGER.debug("Hex Signature: " + md5_signature.hex())
 
             json_payload = self._device_info['version'].encode('ascii', errors='strict') + md5_signature + json_payload
 
-            #log.debug("V3.1 Full Encrypted Payload: %s", json_payload.hex())
+            #_LOGGER.debug("V3.1 Full Encrypted Payload: %s", json_payload.hex())
 
         sequenceN = None
         async with self._seq_lock:
@@ -395,7 +395,7 @@ class TuyaClient:
         stream.append("uint:32=" + str(crc_value))
         stream.append("uint:32=43605")
 
-        #log.debug("Encoded: %s", stream.bytes.hex())
+        #_LOGGER.debug("Encoded: %s", stream.bytes.hex())
 
         return stream.bytes
 
@@ -429,7 +429,7 @@ class TuyaClient:
             actual_crc = binascii.crc32(stream.read('bytes:' + str(to_crc_length))) & 0xFFFFFFFF
 
             if actual_crc != expected_crc:
-                log.warning("Received message from %s failed CRC32 validation. Throwing out message.. Received %d. Expected %d", self._device_info["address"], actual_crc, expected_crc)
+                _LOGGER.warning("Received message from %s failed CRC32 validation. Throwing out message.. Received %d. Expected %d", self._device_info["address"], actual_crc, expected_crc)
                 return None
 
             stream.bytepos = payload_start
@@ -460,9 +460,9 @@ class TuyaClient:
             try:
                 payload = json.loads(payload_raw.decode('utf-8'))
             except Exception as err:
-                log.error("Unable to decode JSON: %s", payload_raw.decode('utf-8'))
+                _LOGGER.error("Unable to decode JSON: %s", payload_raw.decode('utf-8'))
 
 
-        log.debug("Received Command: %d. Payload: %r", command, payload)
+        _LOGGER.debug("Received Command: %d. Payload: %r", command, payload)
 
         return command, payload
